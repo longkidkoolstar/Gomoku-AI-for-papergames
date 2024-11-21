@@ -1,0 +1,2 @@
+# Gomoku-AI-for-papergames
+ 
