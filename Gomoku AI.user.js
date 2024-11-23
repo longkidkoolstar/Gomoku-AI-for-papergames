@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gomoku AI
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      1.1
 // @description  AI for Gomoku on papergames
 // @author       You
 // @match        https://papergames.io/en/gomoku*
@@ -61,6 +61,10 @@ function evaluateLine(line) {
         ' ': 0
     };
     
+    let openEnds = 0;
+    if (line[0] === ' ') openEnds++;
+    if (line[line.length - 1] === ' ') openEnds++;
+    
     for (let cell of line) {
         counts[cell]++;
     }
@@ -77,14 +81,24 @@ function evaluateLine(line) {
     
     // Potential threats
     if (counts[' '] === 2) {
-        if (counts[opponent] === 3) return -10000; // Opponent's developing threat
-        if (counts[player] === 3) return 15000;    // Our developing threat (prioritize offense slightly)
+        if (counts[opponent] === 3) {
+            return openEnds === 2 ? -50000 : -10000; // Opponent's developing threat (higher priority if two-way)
+        }
+        if (counts[player] === 3) {
+            return openEnds === 2 ? 60000 : 15000;   // Our developing threat (much higher priority if two-way)
+        }
     }
     
     // Development patterns
     if (counts[' '] >= 2) {
-        if (counts[player] === 3) return 2000;     // Prioritize our development
-        if (counts[opponent] === 3) return -1500;
+        if (counts[player] === 3) {
+            return openEnds === 2 ? 4000 : 2000;     // Prioritize our development (higher if two-way potential)
+        }
+        if (counts[opponent] === 3) {
+            return openEnds === 2 ? -3000 : -1500;   // Block opponent development (higher if two-way potential)
+        }
+        if (counts[player] === 2 && openEnds === 2) return 400;    // Potential for our two-way
+        if (counts[opponent] === 2 && openEnds === 2) return -300; // Block potential opponent two-way
         if (counts[player] === 2) return 200;
         if (counts[opponent] === 2) return -150;
     }
@@ -227,6 +241,14 @@ function findImmediateThreats(board) {
                     continue;
                 }
                 
+                // Check for two-way threats
+                if (checkTwoWayThreat(board, i, j)) {
+                    board[i][j] = ' ';
+                    console.log(`Found two-way threat at (${i}, ${j})`);
+                    threats.push({i, j, priority: 875000});
+                    continue;
+                }
+                
                 // Check for sequences of 4 that could lead to a win
                 let maxOpponentSeq = 0;
                 
@@ -335,19 +357,84 @@ function evaluateThreat(line) {
     let playerCount = 0;
     let opponentCount = 0;
     let emptyCount = 0;
+    let consecutiveOpponent = 0;
+    let maxConsecutiveOpponent = 0;
+    let openEnds = 0;
     
-    for (const cell of line) {
-        if (cell === player) playerCount++;
-        else if (cell === opponent) opponentCount++;
-        else emptyCount++;
+    // Count open ends
+    if (line[0] === ' ') openEnds++;
+    if (line[line.length - 1] === ' ') openEnds++;
+    
+    for (let i = 0; i < line.length; i++) {
+        const cell = line[i];
+        if (cell === player) {
+            playerCount++;
+            consecutiveOpponent = 0;
+        }
+        else if (cell === opponent) {
+            opponentCount++;
+            consecutiveOpponent++;
+            maxConsecutiveOpponent = Math.max(maxConsecutiveOpponent, consecutiveOpponent);
+        }
+        else {
+            emptyCount++;
+            consecutiveOpponent = 0;
+        }
     }
     
     // Evaluate threat level
-    if (opponentCount === 4 && emptyCount === 1) return 90000; // Must block
-    if (opponentCount === 3 && emptyCount === 2) return 5000;  // Should block
-    if (opponentCount === 2 && emptyCount === 3) return 1000;  // Potential threat
+    if (opponentCount === 4 && emptyCount === 1) return 90000;     // Must block
+    if (opponentCount === 3 && emptyCount === 2 && openEnds === 2) return 50000;  // Two-way threat potential
+    if (opponentCount === 3 && emptyCount === 2) return 5000;      // Should block
+    if (opponentCount === 2 && emptyCount === 3 && openEnds === 2) return 2000;   // Potential two-way threat
+    if (opponentCount === 2 && emptyCount === 3) return 1000;      // Potential threat
     
     return threatLevel;
+}
+
+// Check for two-way threats
+function checkTwoWayThreat(board, row, col) {
+    const opponent = player === 'X' ? 'O' : 'X';
+    let threatCount = 0;
+    const directions = [
+        [[0, 1], [0, -1]], // Horizontal
+        [[1, 0], [-1, 0]], // Vertical
+        [[1, 1], [-1, -1]], // Diagonal
+        [[1, -1], [-1, 1]]  // Anti-diagonal
+    ];
+    
+    for (const [dir1, dir2] of directions) {
+        let count = 1;
+        let empty = 0;
+        let blocked = false;
+        
+        // Check both directions
+        for (const [dx, dy] of [dir1, dir2]) {
+            let x = row + dx;
+            let y = col + dy;
+            let spaces = 0;
+            
+            while (x >= 0 && x < 15 && y >= 0 && y < 15 && spaces < 2) {
+                if (board[x][y] === opponent) {
+                    count++;
+                } else if (board[x][y] === ' ') {
+                    empty++;
+                    spaces++;
+                } else {
+                    blocked = true;
+                    break;
+                }
+                x += dx;
+                y += dy;
+            }
+        }
+        
+        if (count >= 3 && empty >= 2 && !blocked) {
+            threatCount++;
+        }
+    }
+    
+    return threatCount >= 2; // True if there's a two-way threat
 }
 
 // Cache for move evaluations
@@ -379,7 +466,7 @@ function findBestMove(board) {
     
     for (const move of finalMoves) {
         board[move.i][move.j] = player;
-        const score = minimax(board, 3, -Infinity, Infinity, false);
+        const score = minimax(board, 4, -Infinity, Infinity, false);
         board[move.i][move.j] = ' ';
         
         if (score > bestScore) {
