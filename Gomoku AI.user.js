@@ -466,7 +466,7 @@ function findBestMove(board) {
     
     for (const move of finalMoves) {
         board[move.i][move.j] = player;
-        const score = minimax(board, 4, -Infinity, Infinity, false);
+        const score = minimax(board, 4, -Infinity, Infinity, true);  // Changed to true
         board[move.i][move.j] = ' ';
         
         if (score > bestScore) {
@@ -589,6 +589,26 @@ function getValidMoves(board) {
     if (blockingMoves.length > 0) {
         console.log('Must block opponent win');
         return [blockingMoves[0]];
+    }
+
+    // Check for opponent's potential two-way threats
+    let twoWayThreats = [];
+    for (let i = 0; i < 15; i++) {
+        for (let j = 0; j < 15; j++) {
+            if (board[i][j] === ' ') {
+                board[i][j] = opponent;
+                if (checkTwoWayThreat(board, i, j)) {
+                    console.log(`Found potential two-way threat at (${i}, ${j})`);
+                    twoWayThreats.push({i, j, priority: 875000});
+                }
+                board[i][j] = ' ';
+            }
+        }
+    }
+
+    if (twoWayThreats.length > 0) {
+        console.log('Must block potential two-way threat');
+        return twoWayThreats;
     }
 
     // No critical moves, evaluate strategic moves
